@@ -137,7 +137,12 @@ with st.sidebar:
                         "---------------------\n"
                         "{context_str}\n"
                         "---------------------\n"
-                        "Given the context information above I want you to think step by step to answer the query in a crisp manner, incase case you don't know the answer say 'I don't know!'.\n"
+                        "Given the context information above I want you to answer the query.\n"
+                        "Rules:\n"
+                        "1. Use markdown formatting (e.g. **bolding** for key terms).\n"
+                        "2. Use bullet points for lists or steps to make it readable.\n"
+                        "3. Keep the tone professional but easy to understand.\n"
+                        "4. If you don't know the answer, say 'I don't know!'.\n"
                         "Query: {query_str}\n"
                         "Answer: "
                     )
