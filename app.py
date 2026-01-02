@@ -129,11 +129,25 @@ with st.sidebar:
                     # 2. Retrieval: Pinecone finds top 10 chunks using Cosine Similarity.
                     # 3. Reranking: The Cross-Encoder selects the best 3 chunks.
                     # 4. Augmentation: 'condense_plus_context' injects these 3 chunks into the system prompt.
+                    
+                    # Custom Prompt Template
+                    # This instructs Gemini to behave specifically (e.g., say "I don't know").
+                    custom_prompt = PromptTemplate(
+                        "Context information is below.\n"
+                        "---------------------\n"
+                        "{context_str}\n"
+                        "---------------------\n"
+                        "Given the context information above I want you to think step by step to answer the query in a crisp manner, incase case you don't know the answer say 'I don't know!'.\n"
+                        "Query: {query_str}\n"
+                        "Answer: "
+                    )
+
                     chat_engine = index.as_chat_engine(
                         chat_mode="condense_plus_context",
                         streaming=True,
                         similarity_top_k=10, 
-                        node_postprocessors=[reranker] 
+                        node_postprocessors=[reranker],
+                        context_prompt=custom_prompt
                     )
                     
                     st.session_state.file_cache[file_key] = chat_engine

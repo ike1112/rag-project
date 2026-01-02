@@ -11,6 +11,9 @@ This is a Retrieval-Augmented Generation (RAG) application that allows you to up
 *   **Context-Aware Reranking**: Uses a **Cross-Encoder model** to re-evaluate retrieval results, ensuring the AI only sees the most relevant information.
 *   **Chat History**: Maintains the context of your conversation ("memory") so you can ask follow-up questions naturally.
 
+## 🏗️ Architecture
+
+![Architecture Diagram](architecture_diagram.png)
 
 ## 🛠️ Technology Stack
 
