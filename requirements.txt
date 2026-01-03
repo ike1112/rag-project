@@ -14,4 +14,7 @@ python-dotenv
 langchain-openai
 langchain-community
 unstructured[pdf]
+trulens-core
+trulens-apps-llamaindex
+trulens-providers-openai
 
