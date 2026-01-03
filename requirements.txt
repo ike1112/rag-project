@@ -8,4 +8,10 @@ pinecone-client
 
 torch
 sentence-transformers
+ragas
+pandas
+python-dotenv
+langchain-openai
+langchain-community
+unstructured[pdf]
 
