@@ -11,8 +11,12 @@ load_dotenv()
 def main():
     print("🚀 Starting Ragas Testset Generation...")
     
-    # 1. Load Documents (Same as your script)
-    loader = PyPDFLoader("./docs/agentic-ai-patterns.pdf")
+    # 1. Load Documents
+    # Resolve path relative to this script
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    docs_path = os.path.join(current_dir, "..", "docs", "agentic-ai-patterns.pdf")
+    
+    loader = PyPDFLoader(docs_path)
     documents = loader.load()
     
     # 2. Setup LLM & Embeddings (Wrapped for Ragas)

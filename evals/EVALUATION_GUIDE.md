@@ -97,4 +97,12 @@ We use **TruLens** to grade the RAG system's answers against the generated quest
 
 ---
 
+### 📉 Baseline Benchmark (Appendix)
+
+Here is an example result from our standard RAG pipeline (v1):
+
+![Baseline Metrics](metrics%20with%20no%20optimization.png)
+
+*Notice the high Relevance (0.8+) but lower Groundedness (0.57). This indicates room for improvement via advanced retrieval techniques.*
+
 

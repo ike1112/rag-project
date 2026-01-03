@@ -1,11 +1,14 @@
-
 import os
+import sys
 import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
 
 # Disable OTEL to allow Legacy Lens selectors
 os.environ["TRULENS_OTEL_TRACING"] = "0"
+
+# Add parent directory to path so we can import rag_engine
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import our RAG engine
 import rag_engine
@@ -78,12 +81,14 @@ def run_evaluation():
     
     # 3. Load RAG Engine
     session_id = None
-    if os.path.exists(".latest_session"):
-        with open(".latest_session", "r") as f:
+    session_file_path = os.path.join(os.path.dirname(__file__), '..', '.latest_session')
+    
+    if os.path.exists(session_file_path):
+        with open(session_file_path, "r") as f:
             session_id = f.read().strip()
     
     if not session_id:
-        print("❌ No existing session found via .latest_session.")
+        print(f"❌ No existing session found at {session_file_path}.")
         return
 
     print(f"🔗 Connecting to Session ID: {session_id}")
@@ -118,15 +123,22 @@ def run_evaluation():
             print(f"         Make sure to compare with Ground Truth: {reference[:100]}...")
             
             try:
+                # Reset memory for independent evaluation
+                chat_engine.reset()
+                
                 # Use .chat() for ChatEngine
                 chat_engine.chat(question) 
                 
                 # Attempt to tag the record with ground truth for the dashboard
-                record = recording.get()
-                record.meta = {"ground_truth": reference}
+                if len(recording.records) > 0:
+                    record = recording.records[-1]
+                    record.meta = {"ground_truth": reference}
+                else:
+                    print("   ⚠️ No record captured by TruLens.")
                 
-                # Sleep to avoid Rate Limits (429)
-                time.sleep(2) 
+                # Sleep to avoid Rate Limits (429) - Increased to 10s
+                print("   💤 Sleeping 10s...")
+                time.sleep(10) 
                 
             except Exception as e:
                 print(f"   ⚠️ Error: {e}")
