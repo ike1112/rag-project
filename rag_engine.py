@@ -56,6 +56,7 @@ def get_vector_store(session_id):
 
 def create_index_from_docs(documents, session_id):
     """Ingests documents into Pinecone and returns the index."""
+    print(f"🔹 [Standard Engine] Indexing {len(documents)} docs for session {session_id}")
     initialize_settings()
     vector_store = get_vector_store(session_id)
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
