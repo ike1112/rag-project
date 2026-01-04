@@ -1,147 +1,129 @@
 import os
-
 import gc
 import tempfile
 import uuid
 from dotenv import load_dotenv
 
 import streamlit as st
-import streamlit as st
 from llama_index.core import SimpleDirectoryReader
-import rag_engine  # Import our new engine
+import rag_engine
+import rag_engine_sentence_window
+
 
 # Load env vars
 load_dotenv()
 
 # --- Page Config ---
-st.set_page_config(layout="wide") 
-
+st.set_page_config(page_title="RAG Chatbot", layout="wide")
 
 # Session Management (Auto-Load)
 SESSION_FILE = ".latest_session"
 if "id" not in st.session_state:
-    # Try to load last session
     if os.path.exists(SESSION_FILE):
         with open(SESSION_FILE, "r") as f:
             st.session_state.id = f.read().strip()
     else:
         st.session_state.id = str(uuid.uuid4())
-    
     st.session_state.file_cache = {}
 
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "rag_engine_choice" not in st.session_state:
+    st.session_state.rag_engine_choice = "Standard"
+
 session_id = st.session_state.id
-
-# --- Load Models ---
-
-# Note: Models are now loaded inside rag_engine.py, but we initialization is handled when needed.
-
 
 def reset_chat():
     st.session_state.messages = []
     st.session_state.context = None
-    # Reset chat engine memory if it exists
-    if 'chat_engine' in st.session_state:
+    if 'chat_engine' in st.session_state and hasattr(st.session_state.chat_engine, 'reset'):
         st.session_state.chat_engine.reset()
     gc.collect()
 
-
-
 # --- Sidebar ---
 with st.sidebar:
-    st.header(f"Add your documents!")
+    st.header("🤖 Configuration")
     
-    # Session Management
-    # Check if we have a saved session to default to "Resume"
-    default_resume = os.path.exists(SESSION_FILE)
-    resume_session = st.checkbox("Resume previous session?", value=default_resume)
-    
-    uploaded_file = None
-    if resume_session:
-        existing_id = st.text_input("Enter Session ID to resume:", value=session_id)
-        if existing_id:
-            st.session_state.id = existing_id
-            session_id = existing_id
-            # Auto-save manually entered ID
-            with open(SESSION_FILE, "w") as f:
-                f.write(session_id)
-            st.success(f"Resuming session: {session_id}")
+    # Engine Selector
+    engine_choice = st.radio(
+        "Select RAG Strategy:",
+        ["Standard", "Sentence Window"],
+        index=0 if st.session_state.rag_engine_choice == "Standard" else 1
+    )
+    st.session_state.rag_engine_choice = engine_choice
+
+    # Determine active module
+    if engine_choice == "Standard":
+        active_engine = rag_engine
+
     else:
-        uploaded_file = st.file_uploader("Choose your `.pdf` file", type="pdf")
-        st.info(f"Current Session ID: `{session_id}`")
+        active_engine = rag_engine_sentence_window
 
-    if uploaded_file or resume_session:
-        try:
-            # Logic for NEW Upload
-            if uploaded_file:
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    file_path = os.path.join(temp_dir, uploaded_file.name)
-                    
-                    start_indexing = True
-                    # Write to temp file
-                    with open(file_path, "wb") as f:
-                        f.write(uploaded_file.getvalue())
-                    
-                    # SAVE SESSION ID AUTOMATICALLY
-                    with open(SESSION_FILE, "w") as f:
-                        f.write(session_id)
-                    
-                    file_key = f"{session_id}-{uploaded_file.name}"
-                    
-                    if file_key not in st.session_state.get('file_cache', {}):
-                        st.write("Indexing your document...")
-                        
-                        loader = SimpleDirectoryReader(
-                            input_dir=temp_dir,
-                            required_exts=[".pdf"],
-                            recursive=True
-                        )
-                        docs = loader.load_data()
-
-                        # 1. Create Index (Ingest Data)
-                        index = rag_engine.create_index_from_docs(docs, session_id)
-                        
-                        # 2. Create Chat Engine
-                        chat_engine = rag_engine.create_chat_engine(index)
-                        
-                        st.session_state.file_cache[file_key] = chat_engine
-                    
-                    # PERSISTENCE:
-                    st.session_state.chat_engine = st.session_state.file_cache[file_key]
-                    st.success("Ready to Chat!")
-
-            # Logic for RESUMING Session (No Upload)
-            elif resume_session and session_id:
-                # 1. Load Existing Index
-                index = rag_engine.load_index_from_store(session_id)
+    st.divider()
+    st.subheader("Add Documents")
+    
+    # File Upload
+    uploaded_file = st.file_uploader("Upload PDF", type=['pdf'])
+    
+    if uploaded_file:
+        file_path = f"./docs/{uploaded_file.name}"
+        os.makedirs("./docs", exist_ok=True)
+        with open(file_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        
+        if st.button("🚀 Process & Index"):
+            with st.spinner(f"Indexing with {engine_choice} Strategy..."):
+                # Create a NEW session ID for this new index
+                new_session_id = str(uuid.uuid4())
+                st.session_state.id = new_session_id
+                session_id = new_session_id
                 
-                # 2. Create Chat Engine
-                st.session_state.chat_engine = rag_engine.create_chat_engine(index)
+                reader = SimpleDirectoryReader(input_files=[file_path])
+                documents = reader.load_data()
                 
-                st.success(f"Connected to session: {session_id}")
+                # Ingest
+                index = active_engine.create_index_from_docs(documents, session_id)
+                st.session_state.chat_engine = active_engine.create_chat_engine(index)
+                
+                # Save session ID for reuse
+                with open(SESSION_FILE, "w") as f:
+                    f.write(session_id)
+                
+                st.success(f"Indexed! Session ID: {session_id}")
 
+    st.divider()
+    
+    # Resume Session
+    st.subheader("Resume Session")
+    resume_id = st.text_input("Enter Session ID:", value=session_id)
+    if st.button("Load Session"):
+        if resume_id:
+            try:
+                index = active_engine.load_index_from_store(resume_id)
+                st.session_state.chat_engine = active_engine.create_chat_engine(index)
+                st.session_state.id = resume_id
                 
-        except Exception as e:
-            st.error(f"An error occurred: {e}")
-            st.stop()
+                with open(SESSION_FILE, "w") as f:
+                    f.write(resume_id)
+                    
+                st.success(f"Resumed Session: {resume_id}")
+            except Exception as e:
+                st.error(f"Could not load session: {e}")
 
 # --- Main Layout ---
 col1, col2 = st.columns([6, 1])
 
 with col1:
-    st.header(f"Chat with Docs using Gemini 2.0")
+    st.header(f"Chat with Docs ({engine_choice} RAG)")
 
 with col2:
     st.button("Clear ↺", on_click=reset_chat)
-
-
-if "messages" not in st.session_state:
-    reset_chat()
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-if prompt := st.chat_input("What's up?"):
+if prompt := st.chat_input("What is Agentic AI?"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -150,14 +132,8 @@ if prompt := st.chat_input("What's up?"):
         message_placeholder = st.empty()
         full_response = ""
         
-        # VALIDATION:
-        # Ensure the chat engine is actually loaded before trying to query it.
-        # This prevents errors if a user attempts to chat without uploading a file first.
         if 'chat_engine' in st.session_state:
             try:
-                # GENERATION:
-                # The Augmented Prompt (User Query + Retrieved Context) is sent to Gemini.
-                # Gemini generates the answer using the facts provided in the context.
                 streaming_response = st.session_state.chat_engine.stream_chat(prompt)
                 for chunk in streaming_response.response_gen:
                     full_response += chunk
@@ -165,6 +141,6 @@ if prompt := st.chat_input("What's up?"):
                 message_placeholder.markdown(full_response)
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
             except Exception as e:
-                st.error(f"Error generating response: {e}")
+                st.error(f"Error: {e}")
         else:
-            st.error("Please upload a PDF document first!")
+            st.warning("⚠️ No index loaded. Please upload a document or resume a session from the sidebar.")

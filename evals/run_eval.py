@@ -1,152 +1,127 @@
+
 import os
 import sys
+import time
+import argparse
 import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
 
-# Disable OTEL to allow Legacy Lens selectors
+# Disable OTEL
 os.environ["TRULENS_OTEL_TRACING"] = "0"
 
 # Add parent directory to path so we can import rag_engine
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Import our RAG engine
-import rag_engine
-from llama_index.core import VectorStoreIndex
-
-# TruLens Imports (Modern v2.x)
 from trulens.core import Tru, Feedback
 from trulens.apps.llamaindex import TruLlama
 from trulens.providers.openai import OpenAI as OpenAIProvider
 
-try:
-    from trulens.feedback import Groundedness
-except ImportError:
-    try:
-        from trulens_eval.feedback import Groundedness
-    except ImportError:
-        Groundedness = None
-
 load_dotenv()
 
 def run_evaluation():
-    print("🚀 Starting RAG Evaluation with TruLens...")
-    
-    # 1. Initialize TruLens
-    # Manually clean up old DB to ensure fresh start
-    if os.path.exists("eval_db.sqlite"):
-        try:
-            os.remove("eval_db.sqlite")
-        except:
-            pass # If locked, we might fail, but let's try
-            
-    # Using a new DB file
-    tru = Tru(database_url="sqlite:///eval_db.sqlite") 
-    # tru.reset_database()  <-- Removing this as it might be causing schema issues
-    
-    # 2. Setup Feedback Functions (The "Triad")
-    provider = OpenAIProvider()
-    
-    # Try to find Groundedness method
-    f_groundedness = None
-    if hasattr(provider, "groundedness_measure_with_cot_reasons"):
-        f_groundedness = (
-            Feedback(provider.groundedness_measure_with_cot_reasons, name="Groundedness")
-            .on(TruLlama.select_source_nodes().node.text)
-            .on_output()
-        )
-    else:
-        # Fallback for some versions where it is in a separate class
-        print("⚠️ 'groundedness_measure_with_cot_reasons' not found on provider. Skipping Groundedness.")
+    parser = argparse.ArgumentParser(description="Run RAG Evaluation")
+    parser.add_argument("--mode", choices=["standard", "sentence-window"], default="standard", help="Select RAG Engine")
+    args = parser.parse_args()
 
-    # A. Answer Relevance
+    print(f"🚀 Starting RAG Evaluation: {args.mode.upper()} Mode")
+
+    # Dynamic Import based on mode
+    if args.mode == "sentence-window":
+        import rag_engine_sentence_window as active_engine
+        app_id = "RAG_Bot_Sentence_Window"
+        print("✨ Using Sentence Window Retrieval Engine (baseline)")
+    else:
+        import rag_engine as active_engine
+        app_id = "RAG_Bot_v1"
+        print("🔹 Using Standard Engine")
+
+    # 1. Initialize TruLens
+    # Using a new DB file approach (appending)
+    tru = Tru(database_url="sqlite:///eval_db.sqlite") 
+    
+    # 2. Define Feedback Functions (RAG Triad)
+    provider = OpenAIProvider()
+    context_selection = TruLlama.select_source_nodes().node.text
+
+    f_groundedness = (
+        Feedback(provider.groundedness_measure_with_cot_reasons, name="Groundedness")
+        .on(context_selection)
+        .on_output()
+    )
     f_answer_relevance = (
         Feedback(provider.relevance_with_cot_reasons, name="Answer Relevance")
         .on_input_output()
     )
-    
-    # B. Context Relevance
     f_context_relevance = (
         Feedback(provider.context_relevance_with_cot_reasons, name="Context Relevance")
         .on_input()
-        .on(TruLlama.select_source_nodes().node.text)
+        .on(context_selection)
         .aggregate(np.mean)
     )
     
-    feedbacks_list = [f_answer_relevance, f_context_relevance]
+    feedbacks_list = [f_answer_relevance, f_context_relevance, f_groundedness]
 
-    # C. Groundedness
-    if f_groundedness:
-        feedbacks_list.append(f_groundedness)
-    
-    # 3. Load RAG Engine
-    session_id = None
+    # 3. Load Session & Engine
     session_file_path = os.path.join(os.path.dirname(__file__), '..', '.latest_session')
     
     if os.path.exists(session_file_path):
         with open(session_file_path, "r") as f:
             session_id = f.read().strip()
-    
-    if not session_id:
-        print(f"❌ No existing session found at {session_file_path}.")
+    else:
+        print("❌ No session ID found. Please run the app and index a document first.")
         return
 
     print(f"🔗 Connecting to Session ID: {session_id}")
-    index = rag_engine.load_index_from_store(session_id)
-    chat_engine = rag_engine.create_chat_engine(index)
     
-    # 4. Wrap with TruLens Recorder
+    try:
+        index = active_engine.load_index_from_store(session_id)
+        chat_engine = active_engine.create_chat_engine(index)
+    except Exception as e:
+        print(f"❌ Error loading engine: {e}")
+        return
+
+    # 4. Wrap with TruLens
     tru_recorder = TruLlama(
         chat_engine,
-        app_id="RAG_Bot_v1",
+        app_id=app_id,
         feedbacks=feedbacks_list
     )
-    
-    # 5. Load Test Dataset
-    if not os.path.exists("golden_dataset.csv"):
+
+    # 5. Load Data
+    dataset_path = os.path.join(os.path.dirname(__file__), "golden_dataset.csv")
+    if not os.path.exists(dataset_path):
         print("❌ golden_dataset.csv not found.")
         return
         
-    df = pd.read_csv("golden_dataset.csv")
-    print(f"📊 Loaded {len(df)} test questions.")
+    df = pd.read_csv(dataset_path)
+    print(f"📊 Loaded {len(df)} questions.")
     
-    import time
-
-    # 6. Run Evaluation Loop
+    # 6. Evaluation Loop
     print("\n⏳ Running Evaluation Loop...")
-    with tru_recorder as recording:
-        for i, row in df.iterrows():
-            question = row['user_input']
-            reference = row.get('reference', 'N/A')
-            
-            print(f"   [{i+1}/{len(df)}] Q: {question}")
-            print(f"         Make sure to compare with Ground Truth: {reference[:100]}...")
-            
-            try:
-                # Reset memory for independent evaluation
+    for i, row in df.iterrows():
+        question = row['user_input']
+        print(f"   [{i+1}/{len(df)}] Q: {question}")
+        
+        try:
+            # Reset memory
+            if hasattr(chat_engine, 'reset'):
                 chat_engine.reset()
                 
-                # Use .chat() for ChatEngine
-                chat_engine.chat(question) 
+            with tru_recorder as recording:
+                chat_engine.chat(question)
                 
-                # Attempt to tag the record with ground truth for the dashboard
-                if len(recording.records) > 0:
-                    record = recording.records[-1]
-                    record.meta = {"ground_truth": reference}
-                else:
-                    print("   ⚠️ No record captured by TruLens.")
-                
-                # Sleep to avoid Rate Limits (429) - Increased to 10s
-                print("   💤 Sleeping 10s...")
-                time.sleep(10) 
-                
-            except Exception as e:
-                print(f"   ⚠️ Error: {e}")
+            print("   💤 Sleeping 10s...")
+            time.sleep(10)
+            
+        except Exception as e:
+            print(f"   ⚠️ Error: {e}")
 
-    # 7. Show Results
-    print("\n✅ Evaluation Complete!")
-    print("Launching Dashboard...")
+    print("\n✅ Evaluation Complete! Launching Dashboard...")
     tru.run_dashboard()
+    
+    print("\n   [Dashboard is running in the background]")
+    input("   >> Press ENTER to stop the dashboard and exit script...")
 
 if __name__ == "__main__":
     run_evaluation()
